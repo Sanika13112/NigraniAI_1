@@ -31,7 +31,7 @@ This repository holds everything a teammate needs to run, understand and improve
 
 ## Contents
 
-1. [What NigraniAI does](#1-what-nigraniai-does)
+1. [what nigrani ai do](#1-what-nigrani-ai-do)
 2. [How it works](#2-how-it-works)
 3. [Technology](#3-technology)
 4. [Repository layout](#4-repository-layout)
@@ -49,7 +49,7 @@ This repository holds everything a teammate needs to run, understand and improve
 
 ---
 
-## 1. What NigraniAI does
+## 1. what nigrani ai do
 
 Each client company gets **its own copy** of the dashboard, connected to its own systems. Today's
 reference client is **ShopSmart**, an e-commerce website.
