@@ -14,7 +14,7 @@
 
 ---
 
-NigraniAI is a compliance platform **Digital Personal Data Protection Act, 2023** and the
+NigraniAI is a compliance platform for India's  **Digital Personal Data Protection Act, 2023** and the
 **DPDP Rules, 2025**. Instead of questionnaires, it reads a company's live logs and database
 (read-only) and shows, in real time, where the company stands, why, and what to fix: where personal
 data lives, whether every use has consent and a purpose, what is due for deletion, whether a breach is
