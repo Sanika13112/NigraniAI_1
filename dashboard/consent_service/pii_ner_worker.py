@@ -1,4 +1,5 @@
-"""Local NER worker for PII detection v2: run by pii_engine.NER with consent_service/.pii-venv/bin/python.
+"""Local NER worker for PII detection v2: run by pii_engine.NER with consent_service/.pii-venv/bin/python
+(Scripts/python.exe on Windows).
 
 Reads one JSON line per request, {"texts": [...]}, and answers one JSON line, {"results": [[{type, start,
 end, score}, …], …]}, with PERSON and LOCATION entities from Microsoft Presidio on spaCy's
@@ -10,6 +11,8 @@ import sys
 
 
 def main():
+    for stream in (sys.stdin, sys.stdout):          # the parent always talks UTF-8 (Windows defaults differ)
+        stream.reconfigure(encoding="utf-8")
     try:
         from presidio_analyzer import AnalyzerEngine
         from presidio_analyzer.nlp_engine import NlpEngineProvider

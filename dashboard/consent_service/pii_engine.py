@@ -384,8 +384,9 @@ class NER:
     if the environment or model is missing, detection runs without it."""
     def __init__(self):
         self.proc, self.lock, self.error, self.model = None, threading.Lock(), None, None
-        venv = ROOT / ".pii-venv" / "bin" / "python"
-        self.python = str(venv) if venv.exists() else None
+        # the venv's interpreter: bin/python on macOS/Linux, Scripts\python.exe on Windows
+        venv = next((p for p in (ROOT / ".pii-venv" / "bin" / "python", ROOT / ".pii-venv" / "Scripts" / "python.exe") if p.exists()), None)
+        self.python = str(venv) if venv else None
         self.worker = str(ROOT / "pii_ner_worker.py")
 
     def available(self):
@@ -393,7 +394,7 @@ class NER:
 
     def _start(self):
         self.proc = subprocess.Popen([self.python, "-I", self.worker], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                     text=True, bufsize=1)
+                                     text=True, encoding="utf-8", bufsize=1)
         hello = json.loads(self.proc.stdout.readline() or "{}")
         if not hello.get("ready"):
             raise RuntimeError(hello.get("error") or "NER worker didn't start")

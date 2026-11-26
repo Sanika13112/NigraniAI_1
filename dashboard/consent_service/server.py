@@ -30,7 +30,6 @@ Provider commands:      python3 consent_service/server.py help
 """
 
 import collections
-import fcntl
 import hashlib
 import json
 import math
@@ -49,6 +48,19 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+try:                                   # file locking: fcntl on macOS/Linux, msvcrt on Windows
+    import fcntl
+except ImportError:
+    fcntl = None
+    import msvcrt
+
+# Console output may not be UTF-8 (Windows); never let a log line with ₹ or → crash the service.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 import dpdp_baseline
 
@@ -69,7 +81,7 @@ INCIDENTS_FILE = DATA / "incidents.json"
 def load_env():
     env = ROOT.parent / ".env"
     if env.exists():
-        for line in env.read_text().splitlines():
+        for line in env.read_text(encoding="utf-8-sig").splitlines():     # utf-8-sig: Windows Notepad may add a BOM
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
@@ -504,16 +516,16 @@ def read_doc(kind):
     f, h = store_paths(kind)
     if not f.exists():
         h.mkdir(parents=True, exist_ok=True)
-        doc = json.loads(st["default"].read_text())
+        doc = json.loads(st["default"].read_text(encoding="utf-8"))
         doc.update(version=1, updated_at=now_iso(), updated_by="system (default)", change_note=st["note"])
         write_tracked(f, json.dumps(doc, indent=2))
         write_tracked(h / "v1.json", json.dumps(doc, indent=2))
-    return json.loads(f.read_text())
+    return json.loads(f.read_text(encoding="utf-8"))
 
 
 def baseline_of(kind):
     """The shipped default document: the legal floor for this copy (see dpdp_baseline.py)."""
-    return json.loads(STORES[kind]["default"].read_text())
+    return json.loads(STORES[kind]["default"].read_text(encoding="utf-8"))
 
 
 def save_doc(kind, doc, base_version, user, note, coerce=False):
@@ -557,7 +569,7 @@ def history_of(kind):
     read_doc(kind)
     out = []
     for f in store_paths(kind)[1].glob("v*.json"):
-        d = json.loads(f.read_text())
+        d = json.loads(f.read_text(encoding="utf-8"))
         out.append({k: d.get(k) for k in ("version", "updated_at", "updated_by", "change_note")})
     return sorted(out, key=lambda x: -x["version"])
 
@@ -1379,7 +1391,7 @@ FIELD_LABELS = {"title": "Title", "status": "Status", "severity": "Severity", "c
 def read_incidents():
     if not INCIDENTS_FILE.exists():
         return {"seq": 0, "incidents": [], "triage": {}}
-    return json.loads(INCIDENTS_FILE.read_text())
+    return json.loads(INCIDENTS_FILE.read_text(encoding="utf-8"))
 
 
 def write_incidents(reg):
@@ -1834,7 +1846,7 @@ _last_used, _last_saved = {}, [0.0]
 
 
 def read_iam():
-    d = json.loads(IAM_FILE.read_text()) if IAM_FILE.exists() else {}
+    d = json.loads(IAM_FILE.read_text(encoding="utf-8")) if IAM_FILE.exists() else {}
     for k in ("users", "groups", "policies", "last_used"):
         d.setdefault(k, {})
     return d
@@ -1983,7 +1995,7 @@ def audit(user, action, detail=""):
     line = json.dumps({"at": now_iso(), "user": user, "action": action, "detail": str(detail)[:300]})
     with _audit_lock, _ledger_lock:
         DATA.mkdir(exist_ok=True)
-        with AUDIT_FILE.open("a") as fh:
+        with AUDIT_FILE.open("a", encoding="utf-8", newline="\n") as fh:
             fh.write(line + "\n")
         ledger_audit_line(line)
 
@@ -1992,7 +2004,7 @@ def read_audit(user=None, limit=300):
     if not AUDIT_FILE.exists():
         return []
     out = []
-    for line in AUDIT_FILE.read_text().splitlines()[-5000:]:
+    for line in AUDIT_FILE.read_text(encoding="utf-8").splitlines()[-5000:]:
         try:
             e = json.loads(line)
         except ValueError:
@@ -2284,7 +2296,7 @@ def system_status():
             "usage": {"plan": read_plan()["name"], "cycle_start": cycle_bounds(read_plan())[0].isoformat()},
             "payments": {"online": bool(RZP_KEY_ID and RZP_SECRET), "test_mode": RZP_KEY_ID.startswith("rzp_test_"), "webhook": bool(RZP_WEBHOOK_SECRET)},
             "provider_reporting": central_status(),
-            "root_email": ROOT_EMAIL, "audit_events": sum(1 for _ in AUDIT_FILE.open()) if AUDIT_FILE.exists() else 0}
+            "root_email": ROOT_EMAIL, "audit_events": sum(1 for _ in AUDIT_FILE.open(encoding="utf-8")) if AUDIT_FILE.exists() else 0}
 
 
 # ---------------------------------------------------------------- usage metering and plan limits (data/usage.json, data/plan.json)
@@ -2321,7 +2333,7 @@ DEFAULT_PLANS = {"free": {"name": "Free", "base_fee": 0, "tagline": "Applied onl
 def provider():
     """The provider's settings for this copy (provider.json, edited only by the provider on the server):
     seller details for invoices, billing rules and the plan catalogue the client chooses from."""
-    d = json.loads(PROVIDER_FILE.read_text()) if PROVIDER_FILE.exists() else {}
+    d = json.loads(PROVIDER_FILE.read_text(encoding="utf-8")) if PROVIDER_FILE.exists() else {}
     d.setdefault("seller", {})
     d["billing"] = {"prefix": "DPDP", "due_days": 15, "gst": True, "sac": "998314", "grace_days": 14, "initial_plan": "basic", **(d.get("billing") or {})}
     d["plans"] = d.get("plans") or DEFAULT_PLANS
@@ -2343,7 +2355,7 @@ def read_plan():
     if not PLAN_FILE.exists():
         DATA.mkdir(exist_ok=True)
         write_tracked(PLAN_FILE, json.dumps(_plan_from_template(provider()["billing"]["initial_plan"], "provider (initial plan)"), indent=2))
-    return json.loads(PLAN_FILE.read_text())
+    return json.loads(PLAN_FILE.read_text(encoding="utf-8"))
 
 
 def write_plan(p):
@@ -2400,7 +2412,7 @@ _usage = {"data": None, "dirty": False, "saved": 0}
 
 def _usage_doc():
     if _usage["data"] is None:
-        _usage["data"] = json.loads(USAGE_FILE.read_text()) if USAGE_FILE.exists() else {"days": {}, "watermark": None, "alerts": {}}
+        _usage["data"] = json.loads(USAGE_FILE.read_text(encoding="utf-8")) if USAGE_FILE.exists() else {"days": {}, "watermark": None, "alerts": {}}
     return _usage["data"]
 
 
@@ -2411,8 +2423,8 @@ def _flush_usage(force=False):
         d["days"] = {k: v for k, v in d["days"].items() if k >= keep}
         DATA.mkdir(exist_ok=True)
         tmp = USAGE_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(d, separators=(",", ":")))
-        tmp.replace(USAGE_FILE)
+        tmp.write_text(encoding="utf-8", newline="\n", data=json.dumps(d, separators=(",", ":")))
+        _replace(tmp, USAGE_FILE)
         _usage.update(dirty=False, saved=time.time())
 
 
@@ -2605,7 +2617,7 @@ READINESS_FILE = DATA / "readiness.json"
 
 
 def read_readiness():
-    return json.loads(READINESS_FILE.read_text()) if READINESS_FILE.exists() else []
+    return json.loads(READINESS_FILE.read_text(encoding="utf-8")) if READINESS_FILE.exists() else []
 
 
 def save_readiness(body, actor):
@@ -2687,6 +2699,42 @@ _ledger_depth = [0]
 _ledger = {"size": -1, "loaded": False, "seq": 0, "head": GENESIS_HASH, "files": {}, "audit_lines": 0, "seal_day": None, "genesis_at": None}
 
 
+def _lock_file(fh):
+    """Exclusive lock on an open file, waiting until it is free (fcntl on macOS/Linux, msvcrt on Windows)."""
+    if fcntl:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        return
+    fh.seek(0)
+    while True:
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)    # retries for about 10 s, then raises
+            return
+        except OSError:
+            continue
+
+
+def _unlock_file(fh):
+    if fcntl:
+        fcntl.flock(fh, fcntl.LOCK_UN)
+        return
+    fh.seek(0)
+    try:
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+
+
+def _replace(tmp, path):
+    """Atomic rename. On Windows the target can be briefly held open by a reader, so retry a few times."""
+    for attempt in range(10):
+        try:
+            return tmp.replace(path)
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+
 class _LedgerGuard:
     """Thread lock + a cross-process file lock (the provider's CLI may write while the server runs).
     On the outermost entry, re-load the ledger's state if another process appended to it."""
@@ -2695,8 +2743,8 @@ class _LedgerGuard:
         _ledger_depth[0] += 1
         if _ledger_depth[0] == 1:
             DATA.mkdir(exist_ok=True)
-            self.fh = open(DATA / ".ledger.lock", "a")
-            fcntl.flock(self.fh, fcntl.LOCK_EX)
+            self.fh = open(DATA / ".ledger.lock", "a+", encoding="utf-8")
+            _lock_file(self.fh)
             size = LEDGER_FILE.stat().st_size if LEDGER_FILE.exists() else 0
             if _ledger["loaded"] and size != _ledger["size"]:
                 _ledger.update(loaded=False, seq=0, head=GENESIS_HASH, files={}, audit_lines=0, seal_day=None)
@@ -2706,7 +2754,7 @@ class _LedgerGuard:
         _ledger_depth[0] -= 1
         if _ledger_depth[0] == 0:
             _ledger["size"] = LEDGER_FILE.stat().st_size if LEDGER_FILE.exists() else 0
-            fcntl.flock(self.fh, fcntl.LOCK_UN)
+            _unlock_file(self.fh)
             self.fh.close()
         _ledger_rlock.release()
 
@@ -2752,14 +2800,14 @@ def _tracked_now():
 
 
 def _audit_lines():
-    return AUDIT_FILE.read_text().splitlines() if AUDIT_FILE.exists() else []
+    return AUDIT_FILE.read_text(encoding="utf-8").splitlines() if AUDIT_FILE.exists() else []
 
 
 def _ledger_entries():
     if not LEDGER_FILE.exists():
         return []
     out = []
-    for line in LEDGER_FILE.read_text().splitlines():
+    for line in LEDGER_FILE.read_text(encoding="utf-8").splitlines():
         try:
             out.append(json.loads(line))
         except ValueError:
@@ -2773,7 +2821,7 @@ def _ledger_write(entry):
     entry.setdefault("at", now_iso())
     entry["hash"] = _sha(_canon({k: v for k, v in entry.items() if k != "hash"}))
     DATA.mkdir(exist_ok=True)
-    with LEDGER_FILE.open("a") as fh:
+    with LEDGER_FILE.open("a", encoding="utf-8", newline="\n") as fh:
         fh.write(_canon(entry) + "\n")
     _ledger.update(seq=entry["seq"], head=entry["hash"])
     return entry
@@ -2822,8 +2870,8 @@ def write_tracked(path, text):
     with _ledger_lock:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(text)
-        tmp.replace(path)
+        tmp.write_text(encoding="utf-8", newline="\n", data=text)
+        _replace(tmp, path)
         ledger_file(path)
 
 
@@ -2891,10 +2939,10 @@ def verify_integrity(actor=None):
                "problems": problems[:50], "problem_count": len(problems), "seals": seals[-60:], "exports": exports[-30:]}
     prior = {}
     try:
-        prior = json.loads(INTEGRITY_FILE.read_text()) if INTEGRITY_FILE.exists() else {}
+        prior = json.loads(INTEGRITY_FILE.read_text(encoding="utf-8")) if INTEGRITY_FILE.exists() else {}
     except ValueError:
         pass
-    INTEGRITY_FILE.write_text(json.dumps({k: res[k] for k in ("ok", "checked_at", "checked_by", "problem_count", "head")}, indent=2))
+    INTEGRITY_FILE.write_text(encoding="utf-8", newline="\n", data=json.dumps({k: res[k] for k in ("ok", "checked_at", "checked_by", "problem_count", "head")}, indent=2))
     if problems and (prior.get("ok", True) or prior.get("problem_count") != len(problems)):
         audit("integrity monitor", "integrity.broken", f"{len(problems)} problem(s): {problems[0]['text']}")
     return res
@@ -2971,7 +3019,7 @@ def build_pack(actor, frm, to, token):
         vers = []
         for f in sorted(h.glob("v*.json"), key=lambda p: int(re.sub(r"\D", "", p.stem) or 0)):
             try:
-                v = json.loads(f.read_text())
+                v = json.loads(f.read_text(encoding="utf-8"))
                 vers.append({k: v.get(k) for k in ("version", "updated_at", "updated_by", "change_note")})
             except ValueError:
                 pass
@@ -3100,11 +3148,11 @@ DPA_STATES = (True, False, None)
 
 def read_datamap():
     try:
-        d = json.loads(DATAMAP_FILE.read_text()) if DATAMAP_FILE.exists() else {}
+        d = json.loads(DATAMAP_FILE.read_text(encoding="utf-8")) if DATAMAP_FILE.exists() else {}
     except ValueError:
         d = {}
     if not d.get("config"):
-        base = json.loads(DEFAULT_DATAMAP.read_text())
+        base = json.loads(DEFAULT_DATAMAP.read_text(encoding="utf-8"))
         base.pop("_about", None)
         d["config"] = {**base, "rev": 1, "updated_at": now_iso(), "updated_by": "system (default)"}
     d.setdefault("history", [])
@@ -3653,7 +3701,7 @@ _pii_logs = {"watermark": {}, "leaks": {}, "masked_fp": {}, "masked_total": 0, "
 
 def read_pii():
     try:
-        d = json.loads(PII_FILE.read_text()) if PII_FILE.exists() else {}
+        d = json.loads(PII_FILE.read_text(encoding="utf-8")) if PII_FILE.exists() else {}
     except ValueError:
         d = {}
     d.setdefault("feedback", {})
@@ -4021,7 +4069,7 @@ def _seller_ready():
 
 
 def read_billing():
-    d = json.loads(BILLING_FILE.read_text()) if BILLING_FILE.exists() else {}
+    d = json.loads(BILLING_FILE.read_text(encoding="utf-8")) if BILLING_FILE.exists() else {}
     for k, v in (("profile", {}), ("invoices", []), ("closed_cycles", []), ("invoice_seq", {}), ("orders", {})):
         d.setdefault(k, v)
     return d
@@ -4487,7 +4535,7 @@ def central_report(kind="periodic"):
         dm = _dm_live["result"]
     dm = dm or (read_datamap().get("last") or {})
     try:
-        ig = json.loads(INTEGRITY_FILE.read_text()) if INTEGRITY_FILE.exists() else {}
+        ig = json.loads(INTEGRITY_FILE.read_text(encoding="utf-8")) if INTEGRITY_FILE.exists() else {}
     except ValueError:
         ig = {}
     reg, clocks, now = read_incidents(), read_doc("breach").get("clocks") or {}, datetime.now(timezone.utc)
@@ -4802,7 +4850,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not m.group(3):
                     return self.send(200, history_of(kind))
                 f = store_paths(kind)[1] / f"v{int(m.group(3))}.json"
-                return self.send(200, json.loads(f.read_text())) if f.exists() else self.send(404, {"error": "no such version"})
+                return self.send(200, json.loads(f.read_text(encoding="utf-8"))) if f.exists() else self.send(404, {"error": "no such version"})
             return self.send(404, {"error": "not found"})
         except ValueError as e:
             return self.send(400, {"error": str(e)})
@@ -5029,7 +5077,7 @@ class Handler(BaseHTTPRequestHandler):
         if not f.exists():
             return self.send(404, {"error": "no such version"})
         b = self.body()
-        doc, current = save_doc(kind, json.loads(f.read_text()), b.get("base_version"), user, f"Restored version {v}", coerce=True)
+        doc, current = save_doc(kind, json.loads(f.read_text(encoding="utf-8")), b.get("base_version"), user, f"Restored version {v}", coerce=True)
         if current:
             return self.send(409, {"error": "The policy was changed by someone else. Reload and try again.", "current": current})
         audit(user, f"{kind}.restore", f"v{v} → v{doc['version']}")

@@ -192,12 +192,16 @@ Never in git (see `.gitignore`): `.env` files, `dashboard/consent_service/data/`
 | Tool | Version | Check with |
 |---|---|---|
 | Git | any recent | `git --version` |
-| Python | **3.10 or newer** (3.11 for the optional PII language model) | `python3 --version` |
+| Python | **3.10 or newer** (3.11 for the optional PII language model) | `python3 --version` (Windows: `py --version`) |
 | A modern browser | Chrome, Edge, Firefox or Safari | – |
 | A GitHub account | – | – |
 
-No Node.js, no package manager and no local database. macOS, Linux and Windows (WSL) all work; the
-commands below are for macOS and Linux.
+No Node.js, no package manager and no local database. **macOS, Linux and Windows all work.** The
+commands below are for macOS and Linux; Windows (PowerShell) versions follow each block.
+
+> **Windows:** install Python from [python.org](https://www.python.org/downloads/) and tick *Add
+> python.exe to PATH*. Use `py` where this guide says `python3`. Before cloning, run
+> `git config --global core.autocrlf input` once, so Git doesn't change line endings in your commits.
 
 ### 5.2 Fork and clone
 
@@ -251,6 +255,16 @@ The service prints this when it is ready:
 [consent] listening on http://localhost:8091  (allowed origins: http://localhost:8090)
 ```
 
+**Windows (PowerShell)**, in two PowerShell windows inside the `dashboard` folder:
+
+```powershell
+copy .env.example .env                      # then edit .env in VS Code or Notepad
+py consent_service\server.py                 # window 1: the service → http://localhost:8091
+cd frontend; py -m http.server 8090          # window 2: the browser app → http://localhost:8090
+```
+
+Save `.env` as UTF-8 (the default in VS Code and in current Notepad).
+
 On the first run the service creates `consent_service/data/` with the starting rules from the
 `default_*.json` files. That folder is your local copy of the system's state and is ignored by git.
 
@@ -269,7 +283,16 @@ python3.11 -m venv .pii-venv
 .pii-venv/bin/python -m spacy download en_core_web_lg
 ```
 
-Restart the service; it finds `.pii-venv` by itself. On a machine with little memory, download
+On Windows (PowerShell):
+
+```powershell
+cd dashboard\consent_service
+py -3.11 -m venv .pii-venv
+.pii-venv\Scripts\pip install "presidio-analyzer==2.2.*" "spacy==3.8.*"
+.pii-venv\Scripts\python -m spacy download en_core_web_lg
+```
+
+Restart the service; it finds `.pii-venv` by itself (`bin/python` or `Scripts\python.exe`). On a machine with little memory, download
 `en_core_web_md` instead and set `PII_NER_MODEL=en_core_web_md` in `.env`.
 
 ### 5.6 Run the website
@@ -466,6 +489,7 @@ Contributors don't deploy: get your change merged into `main` and the lead takes
 | Problem | Fix |
 |---|---|
 | `Missing in .env: SHOP_SUPABASE_URL, …` | Copy `.env.example` to `.env` in `dashboard/` and fill in every required value |
+| `python3` is not recognised (Windows) | Use `py` instead, or reinstall Python with *Add python.exe to PATH* ticked |
 | `Address already in use` | Something already uses port 8090 or 8091. Stop it, or use another port and update `CONSENT_ALLOWED_ORIGINS` and `config.js` |
 | Pages load but every request fails (CORS error in the console) | Open `http://localhost:8090`, not `127.0.0.1`, or add your address to `CONSENT_ALLOWED_ORIGINS` |
 | "Sign in to the dashboard first." | Your session expired or your account doesn't exist yet: sign in again, or ask for an account |

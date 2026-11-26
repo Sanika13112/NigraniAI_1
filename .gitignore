@@ -10,3 +10,4 @@ dashboard/consent_service/.pii-venv/
 dashboard/deploy/target.env
 website/dist/
 .vercel
+.vscode/
